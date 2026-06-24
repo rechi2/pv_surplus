@@ -1,0 +1,136 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  Blueprint: Wallbox Logger                                                 ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+blueprint:
+  name: "Wallbox – Logger"
+  description: >
+    Protokolliert Zustandsänderungen der Wallbox mit farbcodierten
+    Icons in eine Logdatei.
+  domain: automation
+
+  input:
+    wallbox_frc_entity:
+      name: "Wallbox Force-State (frc)"
+      selector:
+        entity:
+          filter:
+            - domain: select
+
+    wallbox_amp_entity:
+      name: "Wallbox Ampere (amp)"
+      selector:
+        entity:
+          filter:
+            - domain: number
+
+    wallbox_psm_entity:
+      name: "Wallbox Phasenmodus (psm)"
+      selector:
+        entity:
+          filter:
+            - domain: select
+
+    wallbox_car_entity:
+      name: "Wallbox Auto-Status (car)"
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+
+    lademodus_entity:
+      name: "Lademodus"
+      selector:
+        entity:
+          filter:
+            - domain: input_select
+
+    wallbox_power_sensor:
+      name: "Wallbox Power Sensor"
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+
+    surplus_sensor:
+      name: "Ziel-Überschuss Sensor"
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+
+    log_file_entity:
+      name: "Log File Entity"
+      description: "notify Entity für die Logdatei."
+      selector:
+        entity:
+          filter:
+            - domain: notify
+
+mode: queued
+max: 10
+
+trigger:
+  - platform: state
+    entity_id: !input wallbox_frc_entity
+  - platform: state
+    entity_id: !input wallbox_amp_entity
+  - platform: state
+    entity_id: !input wallbox_psm_entity
+  - platform: state
+    entity_id: !input lademodus_entity
+  - platform: state
+    entity_id: !input wallbox_car_entity
+
+condition:
+  - condition: template
+    value_template: >
+      {{ trigger.from_state.state not in ['unknown', 'unavailable']
+         and trigger.to_state.state not in ['unknown', 'unavailable'] }}
+
+action:
+  - variables:
+      surplus_entity: !input surplus_sensor
+      wb_power_entity: !input wallbox_power_sensor
+      icon: >
+        {% set entity = trigger.entity_id %}
+        {% if 'frc' in entity %}
+          {% if trigger.to_state.state == '2' %}▶️
+          {% elif trigger.to_state.state == '1' %}⏸
+          {% else %}🔘{% endif %}
+        {% elif 'amp' in entity %}🔌
+        {% elif 'psm' in entity %}🔄
+        {% elif 'lademodus' in entity %}🔘
+        {% elif 'car' in entity %}🚗
+        {% else %}📝{% endif %}
+      color: >
+        {% set entity = trigger.entity_id %}
+        {% if 'frc' in entity %}
+          {% if trigger.to_state.state == '2' %}green
+          {% elif trigger.to_state.state == '1' %}red
+          {% else %}gray{% endif %}
+        {% elif 'amp' in entity %}blue
+        {% elif 'psm' in entity %}orange
+        {% elif 'lademodus' in entity %}purple
+        {% elif 'car' in entity %}
+          {% if trigger.to_state.state == 'on' %}green{% else %}red{% endif %}
+        {% else %}gray{% endif %}
+      friendly: >
+        {% set entity = trigger.entity_id %}
+        {% if 'frc' in entity %}Force-State
+        {% elif 'amp' in entity %}Ampere
+        {% elif 'psm' in entity %}Phasenmodus
+        {% elif 'lademodus' in entity %}Lademodus
+        {% elif 'car' in entity %}Auto
+        {% else %}{{ entity }}{% endif %}
+      surplus: "{{ states(surplus_entity) | float(0) | round(0) }}"
+      wb_power: "{{ states(wb_power_entity) | float(0) | round(0) }}"
+
+  - service: notify.send_message
+    target:
+      entity_id: !input log_file_entity
+    data:
+      message: >
+        [{{ now().isoformat() }}] {{ icon }} [{{ color }}]
+        {{ friendly }}: {{ trigger.from_state.state }} → {{ trigger.to_state.state }}
+        | Ziel: {{ surplus }}W | WB: {{ wb_power }}W
