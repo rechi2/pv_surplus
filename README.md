@@ -100,4 +100,67 @@ Ersetze `goe_XXXXXX` mit deiner go-e Seriennummer.
 | `binary_sensor.goe_XXXXXX_car_0` | go-e Auto verbunden | `binary_sensor.goe_ABC123_car_0` |
 | `notify.wallbox_log` | File-Notification Entity | `notify.wallbox_log` |
 
-## ⚙
+## ⚙️ Schwellwerte
+
+| Parameter | Default | Beschreibung |
+|---|---|---|
+| Start-Schwelle | 1600 W | Laden startet (für 2 Min) |
+| Stopp-Schwelle | 200 W | Laden stoppt (für 3 Min) |
+| Phase-Up | 4800 W | Umschaltung auf 3-phasig (für 5 Min) |
+| Phase-Down | 3500 W | Umschaltung auf 1-phasig (für 5 Min) |
+| Batterie-Priorität | 80 % | Unter diesem SoC: kein Wallbox-Laden |
+
+## 🔌 Leistungsbereiche
+
+| Modus | Min (6A) | Max (16A) |
+|---|---|---|
+| 1-phasig | 1.380 W | 3.680 W |
+| 3-phasig | 4.140 W | 11.040 W |
+
+## 📊 Dashboard
+
+1. Neues Dashboard erstellen (oder bestehendes öffnen)
+2. In den YAML-Modus wechseln (⋮ → Raw-Konfigurationseditor)
+3. Inhalt von `dashboard/wallbox_dashboard.yaml` einfügen
+4. Entity-IDs anpassen
+5. Speichern
+
+## 🔍 Log Viewer
+
+Der Log Viewer ist unter `/local/wallbox_log_viewer.html` erreichbar.
+
+**Features:**
+- 🌙 Dark Theme
+- 🔍 Filterung nach Ereignistyp
+- 🕐 Automatische Zeitzone-Konvertierung
+- 📜 Letzte 100 Einträge
+- 🔄 Auto-Refresh alle 30 Sekunden
+- 📱 Responsive Design
+
+Im Dashboard ist der Viewer als iFrame eingebunden.
+
+## 🧩 Blueprints vs. Package
+
+Du kannst **entweder** das Package **oder** die Blueprints verwenden:
+
+| | Package | Blueprints |
+|---|---|---|
+| Installation | Eine Datei kopieren | 5 Dateien + manuell konfigurieren |
+| Anpassung | YAML editieren | UI-Selektoren |
+| Mehrere Wallboxen | Datei duplizieren | Blueprint mehrfach instanziieren ✅ |
+| Updates | Datei ersetzen | Blueprint ersetzen |
+
+**Empfehlung:** Starte mit dem Package. Wechsle zu Blueprints wenn du
+mehrere Wallboxen hast oder die UI-Konfiguration bevorzugst.
+
+## ⚠️ Hinweise
+
+- Die go-e Wallbox muss im **Neutral**-Modus sein (frc=0 im Normalzustand)
+- Phasenumschaltung (`psm`) erfordert einen go-e Charger **Gemini** oder
+  eine externe Phasenumschaltung
+- Victron-Sensoren müssen über MQTT oder die Victron-Integration verfügbar sein
+- Die Glättung braucht ca. 2 Minuten Anlaufzeit (4 × 30s)
+
+## 📝 Lizenz
+
+Frei verwendbar. Keine Garantie. Nutzung auf eigene Verantwortung.
