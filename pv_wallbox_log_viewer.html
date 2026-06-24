@@ -59,4 +59,199 @@
       background: var(--border);
     }
 
-    .stats
+    .stats {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    .stat-badge {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-size: 0.85em;
+    }
+
+    #log-container {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      max-height: 70vh;
+      overflow-y: auto;
+      padding: 12px;
+    }
+
+    .log-entry {
+      padding: 6px 10px;
+      margin: 3px 0;
+      border-radius: 5px;
+      font-size: 0.85em;
+      line-height: 1.5;
+      border-left: 4px solid var(--gray);
+      background: rgba(255,255,255,0.02);
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      flex-wrap: wrap;
+    }
+
+    .log-entry .timestamp {
+      color: var(--text-dim);
+      white-space: nowrap;
+      min-width: 170px;
+    }
+
+    .log-entry .icon { font-size: 1em; }
+    .log-entry .message { flex: 1; }
+
+    .log-entry.color-green  { border-left-color: var(--green); }
+    .log-entry.color-red    { border-left-color: var(--red); }
+    .log-entry.color-blue   { border-left-color: var(--blue); }
+    .log-entry.color-orange { border-left-color: var(--orange); }
+    .log-entry.color-purple { border-left-color: var(--purple); }
+    .log-entry.color-gray   { border-left-color: var(--gray); }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px;
+      color: var(--text-dim);
+    }
+
+    #log-container::-webkit-scrollbar { width: 8px; }
+    #log-container::-webkit-scrollbar-track { background: var(--bg); }
+    #log-container::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 4px;
+    }
+
+    @media (max-width: 600px) {
+      .log-entry { font-size: 0.75em; }
+      .log-entry .timestamp { min-width: auto; }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>⚡ Wallbox Log Viewer</h1>
+
+  <div class="controls">
+    <button onclick="loadLog()">🔄 Aktualisieren</button>
+    <select id="filter" onchange="applyFilter()">
+      <option value="all">Alle Einträge</option>
+      <option value="green">▶️ Laden gestartet</option>
+      <option value="red">⏸ Laden gestoppt</option>
+      <option value="blue">🔌 Ampere</option>
+      <option value="orange">🔄 Phasenwechsel</option>
+      <option value="purple">🔘 Modus</option>
+    </select>
+    <button onclick="scrollToBottom()">⬇️ Neueste</button>
+  </div>
+
+  <div class="stats">
+    <span class="stat-badge" id="stat-total">Einträge: –</span>
+    <span class="stat-badge" id="stat-last">Letzter: –</span>
+  </div>
+
+  <div id="log-container">
+    <div class="empty-state">Lade Log-Daten…</div>
+  </div>
+
+  <script>
+    // ⚠️ ANPASSEN: Pfad zur Logdatei
+    const LOG_URL = '/local/wallbox_log.txt';
+    const MAX_ENTRIES = 100;
+
+    let allEntries = [];
+
+    function parseLogLine(line) {
+      // Format: [2026-06-24T10:30:00.123456+02:00] ▶️ [green] Force-State: 1 → 2 | Ziel: 3200W | WB: 2800W
+      const match = line.match(
+        /^\[([^\]]+)\]\s*(\S+)\s*\[(\w+)\]\s*(.+)$/
+      );
+      if (!match) return null;
+
+      const [, isoTime, icon, color, message] = match;
+
+      // Konvertiere ISO-Zeitstempel in lokale Zeitzone
+      let localTime;
+      try {
+        const d = new Date(isoTime);
+        localTime = d.toLocaleString('de-DE', {
+          day: '2-digit', month: '2-digit', year: 'numeric',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        });
+      } catch {
+        localTime = isoTime;
+      }
+
+      return { isoTime, localTime, icon, color, message: message.trim() };
+    }
+
+    function renderEntries(entries) {
+      const container = document.getElementById('log-container');
+
+      if (entries.length === 0) {
+        container.innerHTML = '<div class="empty-state">Keine Einträge gefunden.</div>';
+        return;
+      }
+
+      container.innerHTML = entries.map(e => `
+        <div class="log-entry color-${e.color}">
+          <span class="timestamp">${e.localTime}</span>
+          <span class="icon">${e.icon}</span>
+          <span class="message">${e.message}</span>
+        </div>
+      `).join('');
+
+      // Statistiken
+      document.getElementById('stat-total').textContent =
+        `Einträge: ${entries.length}`;
+      document.getElementById('stat-last').textContent =
+        `Letzter: ${entries[entries.length - 1]?.localTime || '–'}`;
+    }
+
+    function applyFilter() {
+      const filter = document.getElementById('filter').value;
+      const filtered = filter === 'all'
+        ? allEntries
+        : allEntries.filter(e => e.color === filter);
+      renderEntries(filtered.slice(-MAX_ENTRIES));
+    }
+
+    function scrollToBottom() {
+      const container = document.getElementById('log-container');
+      container.scrollTop = container.scrollHeight;
+    }
+
+    async function loadLog() {
+      try {
+        const resp = await fetch(LOG_URL + '?t=' + Date.now());
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const text = await resp.text();
+
+        const lines = text.split('\n').filter(l => l.trim());
+        allEntries = lines.map(parseLogLine).filter(Boolean);
+
+        applyFilter();
+
+        // Auto-scroll nach unten
+        setTimeout(scrollToBottom, 100);
+      } catch (err) {
+        document.getElementById('log-container').innerHTML =
+          `<div class="empty-state">❌ Fehler beim Laden: ${err.message}<br>
+           <small>Prüfe den Pfad: ${LOG_URL}</small></div>`;
+      }
+    }
+
+    // Initial laden
+    loadLog();
+
+    // Auto-Refresh alle 30 Sekunden
+    setInterval(loadLog, 30000);
+  </script>
+
+</body>
+</html>
