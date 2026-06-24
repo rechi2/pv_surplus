@@ -1,0 +1,120 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  Wallbox PV-Überschuss Dashboard                                          ║
+# ║  Kopiere diesen Inhalt in ein manuelles Dashboard (YAML-Modus)            ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+title: "⚡ Wallbox"
+views:
+  - title: "Übersicht"
+    path: wallbox
+    type: sections
+    max_columns: 2
+    cards:
+      # ── STEUERUNG ──────────────────────────────────────────────────────────
+      - type: entities
+        title: "🎛️ Steuerung"
+        show_header_toggle: false
+        entities:
+          - entity: input_select.lademodus
+            name: "Lademodus"
+          - entity: input_number.batterie_priority_soc
+            name: "Batterie Priorität"
+          - type: divider
+          # ⚠️ ANPASSEN: Alle goe_XXXXXX Entity-IDs
+          - entity: select.goe_XXXXXX_frc
+            name: "Force-State"
+          - entity: number.goe_XXXXXX_amp
+            name: "Ampere"
+          - entity: select.goe_XXXXXX_psm
+            name: "Phasenmodus"
+          - entity: binary_sensor.goe_XXXXXX_car_0
+            name: "Auto verbunden"
+
+      # ── LEISTUNG ───────────────────────────────────────────────────────────
+      - type: gauge
+        entity: sensor.wallbox_ziel_ueberschuss
+        name: "Ziel-Überschuss"
+        unit: "W"
+        min: 0
+        max: 12000
+        needle: true
+        severity:
+          green: 1600
+          yellow: 500
+          red: 0
+        # ⚠️ ANPASSEN: Farbbereiche nach Bedarf
+
+      - type: gauge
+        entity: sensor.goe_XXXXXX_nrg_12
+        # ⚠️ ANPASSEN: go-e Wallbox Power Entity
+        name: "Wallbox Leistung"
+        unit: "W"
+        min: 0
+        max: 11040
+        needle: true
+        severity:
+          green: 4000
+          yellow: 1380
+          red: 0
+
+      # ── SENSOREN ───────────────────────────────────────────────────────────
+      - type: entities
+        title: "📊 Sensoren"
+        entities:
+          - entity: sensor.verfuegbarer_pv_ueberschuss
+            name: "PV-Überschuss (roh)"
+          - entity: sensor.verfuegbarer_pv_ueberschuss_geglaettet
+            name: "PV-Überschuss (geglättet)"
+          - entity: sensor.wallbox_ziel_ueberschuss
+            name: "Ziel-Überschuss"
+          - type: divider
+          # ⚠️ ANPASSEN: Victron Entity-IDs
+          - entity: sensor.victron_grid_power
+            name: "Netz-Leistung"
+          - entity: sensor.victron_battery_power
+            name: "Batterie-Leistung"
+          - entity: sensor.victron_battery_soc
+            name: "Batterie SoC"
+
+      # ── VERLAUF ────────────────────────────────────────────────────────────
+      - type: history-graph
+        title: "📈 Verlauf (2h)"
+        hours_to_show: 2
+        entities:
+          - entity: sensor.verfuegbarer_pv_ueberschuss_geglaettet
+            name: "Überschuss"
+          - entity: sensor.wallbox_ziel_ueberschuss
+            name: "Ziel"
+          - entity: sensor.goe_XXXXXX_nrg_12
+            # ⚠️ ANPASSEN
+            name: "Wallbox"
+
+      # ── LOG VIEWER (iFrame) ────────────────────────────────────────────────
+      - type: iframe
+        title: "📋 Log"
+        url: "/local/wallbox_log_viewer.html"
+        aspect_ratio: "3:2"
+
+      # ── AUTOMATIONEN ───────────────────────────────────────────────────────
+      - type: entities
+        title: "⚙️ Automationen"
+        show_header_toggle: false
+        entities:
+          - entity: automation.wallbox_pv_uberschuss_regelung
+            name: "PV-Überschuss Regelung"
+            secondary_info: last-triggered
+          - entity: automation.wallbox_umschaltung_3_phasig
+            name: "Phase 1→3"
+            secondary_info: last-triggered
+          - entity: automation.wallbox_umschaltung_1_phasig
+            name: "Phase 3→1"
+            secondary_info: last-triggered
+          - entity: automation.wallbox_schnellladen
+            name: "Schnellladen"
+            secondary_info: last-triggered
+          - entity: automation.wallbox_kein_laden
+            name: "Kein Laden"
+            secondary_info: last-triggered
+          - entity: automation.wallbox_logger
+            name: "Logger"
+            secondary_info: last-triggered
