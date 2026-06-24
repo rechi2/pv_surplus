@@ -1,0 +1,197 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  WALLBOX PV-ÜBERSCHUSSLADEN – Home Assistant Package                       ║
+# ║  go-e Charger + Victron Cerbo GX                                          ║
+# ║                                                                            ║
+# ║  Alle mit ⚠️ ANPASSEN markierten Stellen müssen auf die eigene             ║
+# ║  Installation angepasst werden.                                            ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HELFER
+# ─────────────────────────────────────────────────────────────────────────────
+
+input_select:
+  lademodus:
+    name: "Wallbox Lademodus"
+    icon: mdi:ev-station
+    options:
+      - "PV-Überschuss"
+      - "Schnellladen"
+      - "Kein Laden"
+    initial: "Kein Laden"
+
+input_number:
+  batterie_priority_soc:
+    name: "Batterie Priorität SoC"
+    icon: mdi:battery-charging-80
+    min: 50
+    max: 100
+    step: 5
+    initial: 80
+    unit_of_measurement: "%"
+    mode: slider
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TEMPLATE SENSOREN
+# ─────────────────────────────────────────────────────────────────────────────
+
+template:
+  - sensor:
+      # ── Verfügbarer PV-Überschuss (Momentanwert) ──────────────────────────
+      #
+      #  Formel: (Grid × -1) + Batterie_Power + Wallbox_Power
+      #
+      #  Grid-Power:   negativ = Einspeisung, positiv = Bezug
+      #                → × -1: positiv = Überschuss
+      #  Batterie:     positiv = Laden (= verfügbare Reserve)
+      #  Wallbox:      aktuelle Wallbox-Leistung (bereits verbraucht,
+      #                muss zurückgerechnet werden)
+      #
+      - name: "Verfügbarer PV-Überschuss"
+        unique_id: verfuegbarer_pv_ueberschuss
+        device_class: power
+        state_class: measurement
+        unit_of_measurement: "W"
+        icon: mdi:solar-power-variant
+        state: >
+          {% set grid = states('sensor.victron_grid_power') | float(0) %}
+          {% set batt = states('sensor.victron_battery_power') | float(0) %}
+          {% set wb   = states('sensor.goe_XXXXXX_nrg_12') | float(0) %}
+          {# ⚠️ ANPASSEN: Ersetze die drei Entity-IDs oben:
+               - sensor.victron_grid_power      → Victron Grid-Leistung (W)
+               - sensor.victron_battery_power    → Victron Batterie-Leistung (W, positiv = laden)
+               - sensor.goe_XXXXXX_nrg_12       → go-e Wallbox Gesamtleistung (W)
+          #}
+          {{ ((grid * -1) + batt + wb) | round(0) }}
+        availability: >
+          {{ states('sensor.victron_grid_power') not in ['unknown','unavailable']
+             and states('sensor.victron_battery_power') not in ['unknown','unavailable']
+             and states('sensor.goe_XXXXXX_nrg_12') not in ['unknown','unavailable'] }}
+          {# ⚠️ ANPASSEN: Gleiche Entity-IDs wie oben #}
+
+      # ── Geglätteter PV-Überschuss (Durchschnitt letzte 4 Werte) ───────────
+      - name: "Verfügbarer PV-Überschuss geglättet"
+        unique_id: verfuegbarer_pv_ueberschuss_geglaettet
+        device_class: power
+        state_class: measurement
+        unit_of_measurement: "W"
+        icon: mdi:chart-line-variant
+        state: >
+          {% set current = states('sensor.verfuegbarer_pv_ueberschuss') | float(0) %}
+          {% set attr = state_attr('sensor.verfuegbarer_pv_ueberschuss_geglaettet', 'history') %}
+          {% set history = attr if attr is not none else [] %}
+          {% set ns = namespace(vals = history + [current]) %}
+          {% if ns.vals | length > 4 %}
+            {% set ns.vals = ns.vals[-4:] %}
+          {% endif %}
+          {{ (ns.vals | sum / ns.vals | length) | round(0) }}
+        attributes:
+          history: >
+            {% set current = states('sensor.verfuegbarer_pv_ueberschuss') | float(0) %}
+            {% set attr = state_attr('sensor.verfuegbarer_pv_ueberschuss_geglaettet', 'history') %}
+            {% set history = attr if attr is not none else [] %}
+            {% set combined = history + [current] %}
+            {% if combined | length > 4 %}
+              {{ combined[-4:] }}
+            {% else %}
+              {{ combined }}
+            {% endif %}
+
+      # ── Wallbox Ziel-Überschuss (mit Batterie-Faktor) ─────────────────────
+      #
+      #  Faktor = 0                                wenn SoC < Priorität
+      #  Faktor = (SoC - Priorität)/(100 - Prio)   wenn SoC ≥ Priorität
+      #
+      #  → Batterie wird bevorzugt geladen; erst ab Prioritäts-SoC
+      #    wird Überschuss anteilig an die Wallbox weitergegeben.
+      #
+      - name: "Wallbox Ziel Überschuss"
+        unique_id: wallbox_ziel_ueberschuss
+        device_class: power
+        state_class: measurement
+        unit_of_measurement: "W"
+        icon: mdi:target
+        state: >
+          {% set surplus = states('sensor.verfuegbarer_pv_ueberschuss_geglaettet') | float(0) %}
+          {% set soc = states('sensor.victron_battery_soc') | float(0) %}
+          {# ⚠️ ANPASSEN: sensor.victron_battery_soc → Victron Batterie SoC (%) #}
+          {% set prio = states('input_number.batterie_priority_soc') | float(80) %}
+          {% if soc < prio %}
+            {% set factor = 0 %}
+          {% elif prio >= 100 %}
+            {% set factor = 1 %}
+          {% else %}
+            {% set factor = ((soc - prio) / (100 - prio)) | float %}
+          {% endif %}
+          {{ (surplus * factor) | round(0) }}
+        availability: >
+          {{ states('sensor.verfuegbarer_pv_ueberschuss_geglaettet') not in ['unknown','unavailable']
+             and states('sensor.victron_battery_soc') not in ['unknown','unavailable'] }}
+          {# ⚠️ ANPASSEN: sensor.victron_battery_soc #}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SHELL COMMANDS
+# ─────────────────────────────────────────────────────────────────────────────
+
+shell_command:
+  wallbox_log_rotate: >
+    tail -200 /config/www/wallbox_log.txt > /config/www/wallbox_log_tmp.txt
+    && mv /config/www/wallbox_log_tmp.txt /config/www/wallbox_log.txt
+  # ⚠️ ANPASSEN: Pfad falls abweichend (z.B. bei Docker /config/www/)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AUTOMATIONEN
+# ─────────────────────────────────────────────────────────────────────────────
+
+automation:
+  # ════════════════════════════════════════════════════════════════════════════
+  # 1. PV-ÜBERSCHUSS REGELUNG (alle 30 Sekunden)
+  # ════════════════════════════════════════════════════════════════════════════
+  - id: wallbox_pv_surplus_control
+    alias: "Wallbox – PV-Überschuss Regelung"
+    description: >
+      Regelt die Wallbox-Ladeleistung basierend auf dem verfügbaren
+      PV-Überschuss. Startet bei >1600W (2 Min), stoppt bei <200W (3 Min).
+    mode: queued
+    max: 10
+
+    trigger:
+      - platform: time_pattern
+        seconds: "/30"
+
+    condition:
+      - condition: state
+        entity_id: input_select.lademodus
+        state: "PV-Überschuss"
+      # Auto muss verbunden sein (car-Sensor = on)
+      - condition: state
+        entity_id: binary_sensor.goe_XXXXXX_car_0
+        # ⚠️ ANPASSEN: binary_sensor.goe_XXXXXX_car_0 → go-e car-Status
+        state: "on"
+
+    action:
+      - variables:
+          ziel_w: "{{ states('sensor.wallbox_ziel_ueberschuss') | float(0) }}"
+          # Aktuelle Phasenzahl aus psm lesen
+          phasen: >
+            {% set psm = states('select.goe_XXXXXX_psm') %}
+            {{ 3 if psm == '2' else 1 }}
+          # ⚠️ ANPASSEN: select.goe_XXXXXX_psm → go-e Phasenumschaltung
+          frc_state: "{{ states('select.goe_XXXXXX_frc') }}"
+          # ⚠️ ANPASSEN: select.goe_XXXXXX_frc → go-e Force-State
+
+      - choose:
+          # ── START: Überschuss > 1600W seit 2 Min, Wallbox aus ────────────
+          - conditions:
+              - condition: numeric_state
+                entity_id: sensor.wallbox_ziel_ueberschuss
+                above: 1600
+                for:
+                  minutes: 2
+              - condition: template
+                value_template: "{{ frc_state != '2' }}"
+            sequence:
+              - variables:
+                  ampere: >
+                    {% set raw = (ziel_w / (phasen | int * 230)) | round(0) %}
+                    {{ [16, [6, raw
