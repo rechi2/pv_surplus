@@ -1,0 +1,213 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  Blueprint: Wallbox PV-Überschuss Regelung                                ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+blueprint:
+  name: "Wallbox – PV-Überschuss Regelung"
+  description: >
+    Regelt die Wallbox-Ladeleistung alle 30 Sekunden basierend auf dem
+    verfügbaren PV-Überschuss. Startet/stoppt automatisch.
+  domain: automation
+
+  input:
+    grid_power_sensor:
+      name: "Grid Power Sensor"
+      description: "Victron Netz-Leistung (W). Negativ = Einspeisung."
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: power
+
+    battery_power_sensor:
+      name: "Battery Power Sensor"
+      description: "Victron Batterie-Leistung (W). Positiv = Laden."
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: power
+
+    battery_soc_sensor:
+      name: "Battery SoC Sensor"
+      description: "Victron Batterie-Ladestand (%)."
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: battery
+
+    wallbox_power_sensor:
+      name: "Wallbox Power Sensor"
+      description: "go-e Wallbox aktuelle Leistung (W)."
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: power
+
+    wallbox_frc_entity:
+      name: "Wallbox Force-State (frc)"
+      description: "go-e select Entity für Force-State."
+      selector:
+        entity:
+          filter:
+            - domain: select
+
+    wallbox_amp_entity:
+      name: "Wallbox Ampere (amp)"
+      description: "go-e number Entity für Stromstärke."
+      selector:
+        entity:
+          filter:
+            - domain: number
+
+    wallbox_psm_entity:
+      name: "Wallbox Phasenmodus (psm)"
+      description: "go-e select Entity für Phasenumschaltung."
+      selector:
+        entity:
+          filter:
+            - domain: select
+
+    wallbox_car_entity:
+      name: "Wallbox Auto-Status (car)"
+      description: "go-e binary_sensor: Auto verbunden."
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+
+    battery_priority:
+      name: "Batterie Priorität SoC"
+      description: "input_number für Batterie-Priorität."
+      selector:
+        entity:
+          filter:
+            - domain: input_number
+
+    threshold_start:
+      name: "Startschwelle (W)"
+      description: "Überschuss ab dem geladen wird."
+      default: 1600
+      selector:
+        number:
+          min: 500
+          max: 5000
+          step: 100
+          unit_of_measurement: "W"
+
+    threshold_stop:
+      name: "Stoppschwelle (W)"
+      description: "Überschuss unter dem gestoppt wird."
+      default: 200
+      selector:
+        number:
+          min: 0
+          max: 1500
+          step: 50
+          unit_of_measurement: "W"
+
+    lademodus_entity:
+      name: "Lademodus"
+      description: "input_select für den Lademodus."
+      selector:
+        entity:
+          filter:
+            - domain: input_select
+
+mode: queued
+max: 10
+
+trigger:
+  - platform: time_pattern
+    seconds: "/30"
+
+condition:
+  - condition: state
+    entity_id: !input lademodus_entity
+    state: "PV-Überschuss"
+  - condition: state
+    entity_id: !input wallbox_car_entity
+    state: "on"
+
+action:
+  - variables:
+      grid_sensor: !input grid_power_sensor
+      batt_sensor: !input battery_power_sensor
+      batt_soc_sensor: !input battery_soc_sensor
+      wb_sensor: !input wallbox_power_sensor
+      frc_entity: !input wallbox_frc_entity
+      amp_entity: !input wallbox_amp_entity
+      psm_entity: !input wallbox_psm_entity
+      prio_entity: !input battery_priority
+      start_threshold: !input threshold_start
+      stop_threshold: !input threshold_stop
+      # Berechne Überschuss
+      grid: "{{ states(grid_sensor) | float(0) }}"
+      batt: "{{ states(batt_sensor) | float(0) }}"
+      wb: "{{ states(wb_sensor) | float(0) }}"
+      surplus_raw: "{{ ((grid * -1) + batt + wb) | round(0) }}"
+      # Batterie-Faktor
+      soc: "{{ states(batt_soc_sensor) | float(0) }}"
+      prio: "{{ states(prio_entity) | float(80) }}"
+      factor: >
+        {% if soc < prio %}0
+        {% elif prio >= 100 %}1
+        {% else %}{{ ((soc - prio) / (100 - prio)) | float }}{% endif %}
+      ziel_w: "{{ (surplus_raw | float * factor | float) | round(0) }}"
+      phasen: "{{ 3 if states(psm_entity) == '2' else 1 }}"
+      frc_state: "{{ states(frc_entity) }}"
+
+  - choose:
+      # ── START ──
+      - conditions:
+          - condition: template
+            value_template: "{{ ziel_w | float > start_threshold | float }}"
+          - condition: template
+            value_template: "{{ frc_state != '2' }}"
+        sequence:
+          - variables:
+              ampere: >
+                {% set raw = (ziel_w | float / (phasen | int * 230)) | round(0) %}
+                {{ [16, [6, raw] | max] | min }}
+          - service: select.select_option
+            target:
+              entity_id: !input wallbox_frc_entity
+            data:
+              option: "2"
+          - delay:
+              seconds: 2
+          - service: number.set_value
+            target:
+              entity_id: !input wallbox_amp_entity
+            data:
+              value: "{{ ampere }}"
+
+      # ── STOPP ──
+      - conditions:
+          - condition: template
+            value_template: "{{ ziel_w | float < stop_threshold | float }}"
+          - condition: template
+            value_template: "{{ frc_state == '2' }}"
+        sequence:
+          - service: select.select_option
+            target:
+              entity_id: !input wallbox_frc_entity
+            data:
+              option: "1"
+
+      # ── REGELUNG ──
+      - conditions:
+          - condition: template
+            value_template: "{{ frc_state == '2' }}"
+        sequence:
+          - variables:
+              ampere: >
+                {% set raw = (ziel_w | float / (phasen | int * 230)) | round(0) %}
+                {{ [16, [6, raw] | max] | min }}
+          - service: number.set_value
+            target:
+              entity_id: !input wallbox_amp_entity
+            data:
+              value: "{{ ampere }}"
