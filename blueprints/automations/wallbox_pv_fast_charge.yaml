@@ -1,0 +1,66 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  Blueprint: Wallbox Schnellladen                                           ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+blueprint:
+  name: "Wallbox – Schnellladen"
+  description: "Startet sofort 3-phasig mit 16A wenn Modus auf Schnellladen wechselt."
+  domain: automation
+
+  input:
+    wallbox_frc_entity:
+      name: "Wallbox Force-State (frc)"
+      selector:
+        entity:
+          filter:
+            - domain: select
+
+    wallbox_amp_entity:
+      name: "Wallbox Ampere (amp)"
+      selector:
+        entity:
+          filter:
+            - domain: number
+
+    wallbox_psm_entity:
+      name: "Wallbox Phasenmodus (psm)"
+      selector:
+        entity:
+          filter:
+            - domain: select
+
+    lademodus_entity:
+      name: "Lademodus"
+      selector:
+        entity:
+          filter:
+            - domain: input_select
+
+mode: queued
+max: 10
+
+trigger:
+  - platform: state
+    entity_id: !input lademodus_entity
+    to: "Schnellladen"
+
+action:
+  - service: select.select_option
+    target:
+      entity_id: !input wallbox_psm_entity
+    data:
+      option: "2"
+  - delay:
+      seconds: 2
+  - service: number.set_value
+    target:
+      entity_id: !input wallbox_amp_entity
+    data:
+      value: 16
+  - delay:
+      seconds: 2
+  - service: select.select_option
+    target:
+      entity_id: !input wallbox_frc_entity
+    data:
+      option: "2"
